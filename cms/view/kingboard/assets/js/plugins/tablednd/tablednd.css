@@ -1,0 +1,36 @@
+#table-2 th {
+    background-color: #29215A;
+    color: white;
+}
+
+#table-2 td, th {
+    padding-right: 8px;
+}
+
+.category td {
+    background-color: #E4EBF3;
+}
+
+.tDnD_whileDrag {
+    background-color: #fff;
+}
+
+tr.alt td {
+    background-color: #ecf6fc;
+}
+
+tr.myDragClass td {
+    color: yellow;
+    background-color: black;
+}
+
+td.dragHandle {
+    
+}
+
+td.showDragHandle {
+	background-image: url(images/updown2.gif);
+	background-repeat: no-repeat;
+	background-position: center center;
+	cursor: move;
+}

@@ -1,0 +1,403 @@
+<?php
+
+/*
+ * -------------------------------------
+ * www.ideacreativa.com.ar | Oscar Castillo
+ * Framework CMS WebAdmin
+ * Controller.php
+ * -------------------------------------
+ */
+
+abstract class Controller
+{
+
+  protected $registry;
+  protected $view;
+  protected $route;
+  protected $baseUrl;
+  protected $baseRoot;
+  protected $dirTemp;
+  protected $dirImage;
+  private static $_item;
+
+  abstract public function index();
+
+  public function __construct()
+  {
+    $this->registry = Registry::getInstance();
+    $request = $this->registry->_request;
+
+    $this->route['controller'] = self::$_item = $request->getController();
+    $this->route['method'] = $request->getMethod();
+    $this->route['params'] = $request->getArgs();
+
+    $this->view = new View;
+    $this->view->assign('route', $this->route);
+  }
+
+  protected function initialize()
+  {
+    if (Session::get('authorized') == null) {
+      Url::redirect('login/login');
+    }
+
+    $menu_left = new MenuLeft();
+    $this->view->assign('menu_left', $menu_left->render());
+
+    $this->baseUrl = $this->route['controller'] . '/';
+    $this->baseRoot = $this->route['controller'] . DS;
+    $this->dirTemp = ROOT . 'view' . DS . 'temp' . DS;
+    $this->dirImage = GAL_PATH . $this->route['controller'] . DS;
+    $this->rutaFile = GAL_PATH . $this->route['controller'] . DS;
+  }
+
+  public static function getItem()
+  {
+    return self::$_item;
+  }
+
+  public function createImage($file, $folder, $new_name, $new_w, $new_h, $crop_x = -1, $crop_y = -1)
+  {
+    list($lwidth, $lheight, $ltype, $lattr) = getimagesize($file);
+    $thumb_w = $new_w;
+    $thumb_h = $new_h;
+
+    switch ($ltype) {
+      case IMAGETYPE_GIF:
+        $src_img = imagecreatefromgif($file);
+        break;
+      case IMAGETYPE_JPEG:
+        $src_img = imagecreatefromjpeg($file);
+        break;
+      case IMAGETYPE_PNG:
+        $src_img = imagecreatefrompng($file);
+        break;
+    }
+
+    $old_x = imageSX($src_img);
+    $old_y = imageSY($src_img);
+
+    if ($crop_x == -1 && $crop_y == -1) {
+      if (($old_x > $old_y) || ($old_x < $old_y)) {
+        $thumb_w = $new_w;
+        $percent = ($new_w * 100) / $old_x;
+        $thumb_h = ceil(($percent * $old_y) / 100);
+      }
+      if ($thumb_h < $new_h) {
+        $percent = ($new_h * 100) / $old_y;
+        $thumb_w = ceil(($percent * $old_x) / 100);
+        $thumb_h = $new_h;
+      }
+      if ($old_x == $old_y) {
+        $thumb_w = $new_w;
+        $thumb_h = $new_h;
+      }
+    }
+
+    $dst_img = ImageCreateTrueColor($thumb_w, $thumb_h);
+
+    if ($ltype == IMAGETYPE_GIF || $ltype == IMAGETYPE_PNG) {
+      $trans_index = imagecolortransparent($src_img);
+
+      if ($trans_index >= 0) {
+        $trans_color = imagecolorsforindex($src_img, $trans_index);
+        $trans_index = imagecolorallocate($dst_img, $trans_color['red'], $trans_color['green'], $trans_color['blue']);
+        imagefill($dst_img, 0, 0, $trans_index);
+        imagecolortransparent($dst_img, $trans_index);
+      } elseif ($ltype == IMAGETYPE_PNG) {
+        imagealphablending($dst_img, false);
+        $color = imagecolorallocatealpha($dst_img, 0, 0, 0, 127);
+        imagefill($dst_img, 0, 0, $color);
+        imagesavealpha($dst_img, true);
+      }
+    }
+
+    if ($crop_x == -1 && $crop_y == -1) {
+      imagecopyresampled($dst_img, $src_img, 0, 0, 0, 0, $thumb_w, $thumb_h, $old_x, $old_y);
+    } else {
+      imagecopyresampled($dst_img, $src_img, 0, 0, $crop_x, $crop_y, $new_w, $new_h, $new_w, $new_h);
+    }
+
+    switch ($ltype) {
+      case IMAGETYPE_GIF:
+        $ext = '.gif';
+        imagegif($dst_img, $folder . $new_name . $ext, 100); //soporta de 0 - 100
+        break;
+      case IMAGETYPE_JPEG:
+        $ext = '.jpg';
+        imagejpeg($dst_img, $folder . $new_name . $ext, 100); //soporta de 0 - 100
+        break;
+      case IMAGETYPE_PNG:
+        $ext = '.png';
+        imagepng($dst_img, $folder . $new_name . $ext, 9); //soporta de 0 - 9
+        break;
+    }
+
+    imagedestroy($dst_img);
+    imagedestroy($src_img);
+
+    return file_exists($folder . $new_name . $ext) ? $new_name . $ext : false;
+  }
+
+  public function uploadFile($source = null, $isJson = true, $genName = true)
+  {
+    $prefijo = 'FL_';
+    $json['success'] = 0;
+    $tabla = $this->route['controller'];
+
+    if (isset($source['name'])) {
+      $info = pathinfo($source['name']);
+      $ext = $info['extension'];
+      $dirFile = $this->rutaFile . 'files' . DS;
+      Helper::createFolder($dirFile, DS);
+
+      $temp = $source['tmp_name'];
+      $new_name = $genName ? $prefijo . mt_rand(1, 99999999) . '.' . $ext : $source['name'];      
+
+      if (move_uploaded_file($temp, $dirFile . $new_name)) {
+        $json = [
+          'success' => 1,
+          'code' => $new_name,
+          'name' => $new_name,
+          'url' => URL_GAL . $tabla . '/files/'
+        ];
+      }
+    }
+
+    return $isJson ? json_encode($json) : $json;
+  }
+
+  public function uploadFile1($source = null, $width = '', $height = '')
+  {
+    $json = array('success' => 0);
+    $tabla = $this->route['controller'];
+
+    if (isset($source['name'])) {
+      $dirFile = $this->dirImage . 'files' . DS;
+      Helper::createFolder($dirFile, DS);
+
+      $temp = $source['tmp_name'];
+      $new_name = mt_rand(1, 99999999);
+
+      if (is_uploaded_file($temp)) {
+        $info = pathinfo($source['name']);
+        $ext = $info['extension'];
+
+        $new_upload = 'FIL_' . $new_name . '.' . $ext;
+
+        if (move_uploaded_file($temp, $dirFile . $new_upload)) {
+          $json = array('success' => 1,
+            'code' => $new_name,
+            'name' => $new_upload,
+            'width' => $width,
+            'height' => $height,
+            'swf' => $new_upload,
+            'url' => URL_CMS . $tabla . '/download/');
+        }
+      }
+    }
+
+    return json_encode($json);
+  }
+
+  public function uploadImage($source = null, $wimage = 0, $himage = 0, $wthumb = 0, $hthumb = 0, $auto = false)
+  {
+    $type = 0;
+    $json = ['success' => $type];
+    $tabla = $this->route['controller'];
+    $etiquetas = '';
+
+    if (isset($source['name'])) {
+      $temp = $source['tmp_name'];
+      $info = pathinfo($source['name']);
+      $ext = $info['extension'];
+
+      if ($ext == 'svg') {
+        $dir_thumb = $this->dirImage . 'thumbs' . DS;
+        $dir_image = $this->dirImage . 'images' . DS;
+        $new_name = mt_rand(1, 99999999) . '.' . $ext;
+
+        if (is_uploaded_file($temp)) {
+          if (move_uploaded_file($temp, $dir_image . 'IM_' . $new_name)) {
+            copy($dir_image . 'IM_' . $new_name, $dir_thumb . 'TH_' . $new_name);
+
+            $json = [
+              'success' => 1,
+              'code' => $new_name,
+              'name' => $new_name,
+              'image' => $new_name,
+              'url' => URL_GAL . $tabla . '/'
+            ];
+          }
+        }
+      } else {
+        $dir_thumb = $this->dirImage . 'thumbs' . DS;
+        $dir_image = $this->dirImage . 'images' . DS;
+        $temp = $source['tmp_name'];
+
+        $new_name = mt_rand(1, 99999999);
+        $new_upload = $this->createImage($temp, $this->dirTemp, $new_name, $wimage, $himage);
+
+        if ($new_upload) {
+          list($lwidth, $lheight, $ltype, $lattr) = getimagesize($this->dirTemp . $new_upload);
+          $new_w = $lwidth;
+          $new_h = $lheight;
+
+          if ($new_h > $himage) {
+            $type = 2;
+          } elseif ($new_w > $wimage) {
+            $type = 2;
+          } elseif (($new_h == $himage && $new_w == $wimage)) {
+            $type = 1;
+          }
+
+          if ($type == 1 || $auto) {
+            Helper::createFolder($dir_thumb, DS);
+            Helper::createFolder($dir_image, DS);
+
+            $new_image = $this->createImage($this->dirTemp . $new_upload, $dir_image, 'IM_' . $new_name, $wimage, $himage);
+            $new_thumb = $this->createImage($this->dirTemp . $new_upload, $dir_thumb, 'TH_' . $new_name, $wthumb, $hthumb);
+            unlink($this->dirTemp . $new_upload);
+            $type = 1;
+          }
+
+          $json = array(
+            'success' => $type,
+            'code' => $new_name,
+            'name' => $new_upload,
+            'width' => $new_w,
+            'height' => $new_h,
+            'image' => $new_upload,
+            'title' => $etiquetas,
+            'url' => URL_GAL . $tabla . '/'
+          );
+        }
+      }
+    }
+
+    return json_encode($json);
+  }
+
+  public function uploadFileManager($source = null, $wimage = 0, $himage = 0, $wthumb = 0, $hthumb = 0, $auto = false, $tabla = false)
+  {
+    $type = 0;
+    $json = ['success' => $type];
+    $etiquetas = '';
+    $dirImageFM = GAL_PATH . $tabla . DS;
+
+    if (isset($source['name'])) {
+      $dir_thumb = $dirImageFM . 'thumbs' . DS;
+      $dir_image = $dirImageFM . 'images' . DS;
+      $temp = $source['tmp_name'];
+
+      $new_name = mt_rand(1, 99999999);
+      $new_upload = $this->createImage($temp, $this->dirTemp, $new_name, $wimage, $himage);
+
+      if ($new_upload) {
+        list($lwidth, $lheight, $ltype, $lattr) = getimagesize($this->dirTemp . $new_upload);
+        $new_w = $lwidth;
+        $new_h = $lheight;
+
+        if ($new_h > $himage) {
+          $type = 2;
+        } elseif ($new_w > $wimage) {
+          $type = 2;
+        } elseif (($new_h == $himage && $new_w == $wimage)) {
+          $type = 1;
+        }
+
+        if ($type == 1 || $auto) {
+          Helper::createFolder($dir_thumb, DS);
+          Helper::createFolder($dir_image, DS);
+
+          $new_image = $this->createImage($this->dirTemp . $new_upload, $dir_image, 'IM_' . $new_name, $wimage, $himage);
+          $new_thumb = $this->createImage($this->dirTemp . $new_upload, $dir_thumb, 'TH_' . $new_name, $wthumb, $hthumb);
+          unlink($this->dirTemp . $new_upload);
+          $type = 1;
+        }
+
+        $json = [
+          'success' => $type,
+          'code' => $new_name,
+          'name' => $new_upload,
+          'width' => $new_w,
+          'height' => $new_h,
+          'image' => $new_upload,
+          'title' => $etiquetas,
+          'url' => URL_GAL . $tabla . '/'
+        ];
+      }
+    }
+
+    return $json;
+  }
+
+  public function cropImage($width, $height)
+  {
+    $tabla = $this->route['controller'];
+    $dir_thumb = $this->dirImage . 'thumbs' . DS;
+    $dir_image = $this->dirImage . 'images' . DS;
+
+    Helper::createFolder($dir_thumb, DS);
+    Helper::createFolder($dir_image, DS);
+
+    $code = $_POST['code'];
+    $name = explode('.', $_POST['img']);
+    $image = $_POST['img'];
+    $new_name = $name[0];
+    $new_image = $this->createImage($this->dirTemp . $image, $dir_image, 'IM_' . $new_name, $_POST['w'], $_POST['h'], $_POST['x'], $_POST['y']);
+
+    if ($new_image) {
+      unlink($this->dirTemp . $image);
+      $new_thumb = $this->createImage($dir_image . $new_image, $dir_thumb, 'TH_' . $new_name, $width, $height);
+
+      if ($new_thumb) {
+        echo "<script>
+				parent.setImage('" . $code . "','" . $image . "','" . URL_GAL . $tabla . '/' . "');
+				parent.jQuery.fancybox.close();
+				</script>";
+      }
+    } else {
+      echo 'Error: No se pudo recortar la imagen!';
+    }
+  }
+
+  public function originalImage($code, $image, $wimage = 0, $himage = 0, $wthumb = 0, $hthumb = 0)
+  {
+    $tabla = $this->route['controller'];
+    $dir_thumb = $this->dirImage . 'thumbs' . DS;
+    $dir_image = $this->dirImage . 'images' . DS;
+    $nameimg = explode('.', $image);
+
+    Helper::createFolder($dir_thumb, DS);
+    Helper::createFolder($dir_image, DS);
+
+    $this->createImage($this->dirTemp . $image, $dir_image, 'IM_' . $nameimg[0], $wimage, $himage);
+    $this->createImage($this->dirTemp . $image, $dir_thumb, 'TH_' . $nameimg[0], $wthumb, $hthumb);
+
+    unlink($this->dirTemp . $image);
+
+    return "<script>
+				parent.setImage('" . $code . "','" . $image . "','" . URL_GAL . $tabla . '/' . "');
+				parent.jQuery.fancybox.close();
+				</script>";
+  }
+
+  public function displayCrop($code = '', $imagen = '', $width = 0, $height = 0, $categoria = '')
+  {
+    list($lwidth, $lheight, $ltype, $lattr) = getimagesize($this->dirTemp . $imagen);
+
+    $data['action'] = $this->baseUrl . 'jcrop';
+    $data['category'] = $categoria;
+    $data['code'] = $code;
+    $data['image'] = $imagen;
+    $data['new_w'] = $lwidth;
+    $data['new_h'] = $lheight;
+    $data['wimage'] = $width;
+    $data['himage'] = $height;
+    $data['tabla'] = $this->route['controller'];
+
+    echo Load::view('jcrop' . DS . 'index', $data);
+  }
+
+}
